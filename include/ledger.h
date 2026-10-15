@@ -15,6 +15,7 @@
 #define MAX_BLOCKS 1024
 #define MAX_RECORDS 32
 #define MAX_QUEUE 64
+#define BLOCK_DIFFICULTY 2
 
 #define ACTION_NAME_LEN 16
 #define ID_LEN 32
@@ -23,7 +24,7 @@
 #define COURSE_LEN 64
 #define DATE_LEN 32
 #define HASH_LEN 65
-#define SIG_LEN 128
+#define SIG_LEN ECDSA_SIG_HEX_LEN
 
 typedef enum {
     COPY_AVAILABLE = 0,
@@ -55,8 +56,8 @@ typedef struct {
     char id[ID_LEN];
     char name[NAME_LEN];
     char course[COURSE_LEN];
-    uint32_t private_key;
-    ECDSAPublicKey public_key;
+    char private_key[ECDSA_PRIVATE_KEY_LEN];
+    char public_key[ECDSA_PUBLIC_KEY_LEN];
     unsigned long nonce;
 } Member;
 
@@ -105,6 +106,8 @@ typedef struct {
     char sealed_by[ID_LEN];
     int token_reward;
     char transaction_id[HASH_LEN];
+    unsigned long proof_nonce;
+    int difficulty;
     LendingRecord records[MAX_RECORDS];
 } Block;
 

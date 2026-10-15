@@ -6,13 +6,23 @@ This project implements a compact C-based blockchain library lending simulator. 
 - copy-level inventory tracking
 - pending lending actions and mining confirmation
 - Merkle root calculation for block integrity checks
-- ECDSA-style message signatures for generated lending records
+- OpenSSL ECDSA P-256 message signatures for generated lending records
+- proof-of-work mining with nonce and difficulty validation
 - overdue detection, renewals, and reservation queues
 - simple state persistence via `save` and `load` style files
 
 ## Build
 
-`gcc -std=c11 -Wall -Wextra -O2 -Iinclude src/main.c src/ledger.c src/sha256.c src/ecdsa.c -lm -o library`
+In MSYS2 UCRT64:
+
+`make`
+
+The build links against OpenSSL `libcrypto` for ECDSA P-256 keys and signatures.
+The default Makefile expects MSYS2 UCRT64 at `C:/msys64/ucrt64`.
+
+Run the automated checks with:
+
+`make test`
 
 ## Example commands
 
@@ -33,5 +43,8 @@ This project implements a compact C-based blockchain library lending simulator. 
 ./library mine miner1
 ./library verify
 ```
+
+Mining performs proof-of-work at the configured `BLOCK_DIFFICULTY`, and
+`verify` checks the chain links, Merkle roots, block hashes, and proof-of-work.
 
 The project is designed as a working prototype for the ALU blockchain summative assignment rather than a production-grade library system.

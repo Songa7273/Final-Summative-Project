@@ -103,32 +103,19 @@ void sha256_update(SHA256_CTX *ctx, const uint8_t *data, size_t len) {
 }
 
 void sha256_final(SHA256_CTX *ctx, uint8_t hash[SHA256_DIGEST_LEN]) {
+    uint8_t padded[128] = {0};
+    uint64_t total_bitlen = ctx->bitlen + (uint64_t)ctx->datalen * 8;
+    size_t padded_len = ctx->datalen + 1u <= 56u ? 64u : 128u;
     size_t i;
 
-    ctx->bitlen += (uint64_t)ctx->datalen * 8;
-
-    uint8_t *data = ctx->data;
-    size_t index = ctx->datalen;
-
-    data[index++] = 0x80;
-
-    if (index > 56) {
-        while (index < 64) {
-            data[index++] = 0;
-        }
-        sha256_update(ctx, data, 64);
-        index = 0;
-    }
-
-    while (index < 56) {
-        data[index++] = 0;
-    }
-
+    memcpy(padded, ctx->data, ctx->datalen);
+    padded[ctx->datalen] = 0x80;
     for (i = 0; i < 8; ++i) {
-        data[56 + i] = (uint8_t)(ctx->bitlen >> (8 * (7 - i)));
+        padded[padded_len - 8u + i] = (uint8_t)(total_bitlen >> (8u * (7u - i)));
     }
-
-    sha256_update(ctx, data, 64);
+    ctx->datalen = 0;
+    ctx->bitlen = 0;
+    sha256_update(ctx, padded, padded_len);
 
     for (i = 0; i < 8; ++i) {
         uint32_t v = ctx->state[i];

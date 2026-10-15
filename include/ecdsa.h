@@ -1,22 +1,15 @@
 #ifndef ECDSA_H
 #define ECDSA_H
 
-#include <stdint.h>
+#define ECDSA_PRIVATE_KEY_LEN 512
+#define ECDSA_PUBLIC_KEY_LEN 256
+#define ECDSA_SIG_HEX_LEN 256
 
-#define ECDSA_SIG_HEX_LEN 33
-
-typedef struct {
-    uint32_t x;
-    uint32_t y;
-} ECPoint;
-
-typedef struct {
-    uint32_t x;
-    uint32_t y;
-} ECDSAPublicKey;
-
-void ecdsa_generate_key(uint32_t *private_key, ECDSAPublicKey *public_key);
-int ecdsa_sign_message(const char *message, uint32_t private_key, char signature_hex[ECDSA_SIG_HEX_LEN]);
-int ecdsa_verify_message(const char *message, const ECDSAPublicKey *public_key, const char *signature_hex);
+int ecdsa_generate_key(char private_key[ECDSA_PRIVATE_KEY_LEN],
+                       char public_key[ECDSA_PUBLIC_KEY_LEN]);
+int ecdsa_sign_message(const char *message, const char *private_key,
+                       char signature_hex[ECDSA_SIG_HEX_LEN]);
+int ecdsa_verify_message(const char *message, const char *public_key,
+                         const char *signature_hex);
 
 #endif

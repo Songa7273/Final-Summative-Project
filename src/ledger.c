@@ -119,11 +119,25 @@ static int merkle_hash_pair(const char *left_hex, const char *right_hex, char ou
     if (left_len + right_len >= sizeof(input)) {
         return 0;
     }
+
     memcpy(input, left_hex, left_len);
     memcpy(input + left_len, right_hex, right_len);
     input[left_len + right_len] = '\0';
     sha256_hash_bytes((const uint8_t *)input, strlen(input), digest);
     bytes_to_hex(digest, 32, out, HASH_LEN);
+    return 1;
+}
+
+static int has_proof_of_work(const char *hash, int difficulty) {
+    int i;
+    if (hash == NULL || difficulty < 0 || difficulty > HASH_LEN - 1) {
+        return 0;
+    }
+    for (i = 0; i < difficulty; ++i) {
+        if (hash[i] != '0') {
+            return 0;
+        }
+    }
     return 1;
 }
 
@@ -164,7 +178,10 @@ static void compute_merkle_root(const LendingRecord *records, int count, char ou
 }
 
 static void init_member_keys(Member *member) {
-    ecdsa_generate_key(&member->private_key, &member->public_key);
+    if (!ecdsa_generate_key(member->private_key, member->public_key)) {
+        member->private_key[0] = '\0';
+        member->public_key[0] = '\0';
+    }
 }
 
 void library_init(Library *lib) {
@@ -590,7 +607,7 @@ int borrow_book(Library *lib, const char *book_id, const char *member_id) {
 
     snprintf(message, sizeof(message), "%s|%s|%s|%s|%s|%lu", record.book_id, record.copy_id, record.member_id,
              record.action, record.due_date, record.nonce);
-    if (!ecdsa_verify_message(message, &member->public_key, record.signature)) {
+    if (!ecdsa_verify_message(message, member->public_key, record.signature)) {
         fprintf(stderr, "Error: signature validation failed for borrow record.\n");
         return 0;
     }
@@ -695,7 +712,7 @@ int return_book(Library *lib, const char *copy_id, const char *member_id) {
 
     snprintf(message, sizeof(message), "%s|%s|%s|%s|%s|%lu", record.book_id, record.copy_id, record.member_id,
              record.action, record.due_date, record.nonce);
-    if (!ecdsa_verify_message(message, &member->public_key, record.signature)) {
+    if (!ecdsa_verify_message(message, member->public_key, record.signature)) {
         fprintf(stderr, "Error: signature validation failed for return record.\n");
         return 0;
     }
@@ -764,7 +781,7 @@ int renew_book(Library *lib, const char *copy_id, const char *member_id) {
 
     snprintf(message, sizeof(message), "%s|%s|%s|%s|%s|%lu", record.book_id, record.copy_id, record.member_id,
              record.action, record.due_date, record.nonce);
-    if (!ecdsa_verify_message(message, &member->public_key, record.signature)) {
+    if (!ecdsa_verify_message(message, member->public_key, record.signature)) {
         fprintf(stderr, "Error: signature validation failed for renewal record.\n");
         return 0;
     }
@@ -805,7 +822,7 @@ int scan_overdue(Library *lib) {
                     build_record_signature(&record, member);
                     snprintf(message, sizeof(message), "%s|%s|%s|%s|%s|%lu", record.book_id, record.copy_id, record.member_id,
                              record.action, record.due_date, record.nonce);
-                    if (ecdsa_verify_message(message, &member->public_key, record.signature)) {
+                    if (ecdsa_verify_message(message, member->public_key, record.signature)) {
                         add_pending_request(lib, copy->book_id, copy->copy_id, copy->borrower_id, "OVERDUE", 4);
                         printf("Overdue flag created for copy %s: %d day(s), fine %.2f\n", copy->copy_id, overdue_days, fine);
                         flagged++;
@@ -888,20 +905,28 @@ int mine_pending(Library *lib, const char *miner_id) {
     }
 
     block.record_count = count;
+    block.difficulty = BLOCK_DIFFICULTY;
     compute_merkle_root(block.records, count, block.merkle_root);
     snprintf(block.transaction_id, sizeof(block.transaction_id), "%s", "reward");
     hash_string(rewards, block.transaction_id);
-    snprintf(block_header, sizeof(block_header), "%d|%lld|%d|%s|%s|%s|%d|%s",
-             block.index,
-             (long long)block.timestamp,
-             block.record_count,
-             block.previous_hash,
-             block.merkle_root,
-             block.sealed_by,
-             block.token_reward,
-             block.transaction_id);
-    sha256_hash_bytes((const uint8_t *)block_header, strlen(block_header), digest);
-    bytes_to_hex(digest, 32, block.hash, HASH_LEN);
+    for (block.proof_nonce = 0u;; ++block.proof_nonce) {
+        snprintf(block_header, sizeof(block_header), "%d|%lld|%d|%s|%s|%s|%d|%s|%lu|%d",
+                 block.index,
+                 (long long)block.timestamp,
+                 block.record_count,
+                 block.previous_hash,
+                 block.merkle_root,
+                 block.sealed_by,
+                 block.token_reward,
+                 block.transaction_id,
+                 block.proof_nonce,
+                 block.difficulty);
+        sha256_hash_bytes((const uint8_t *)block_header, strlen(block_header), digest);
+        bytes_to_hex(digest, 32, block.hash, HASH_LEN);
+        if (has_proof_of_work(block.hash, block.difficulty)) {
+            break;
+        }
+    }
 
     lib->chain.blocks[lib->chain.block_count++] = block;
     lib->pending_count = 0;
@@ -930,7 +955,7 @@ int validate_chain(const Library *lib) {
         if (strcmp(block.merkle_root, merkle) != 0) {
             return 0;
         }
-        snprintf(header, sizeof(header), "%d|%lld|%d|%s|%s|%s|%d|%s",
+        snprintf(header, sizeof(header), "%d|%lld|%d|%s|%s|%s|%d|%s|%lu|%d",
                  block.index,
                  (long long)block.timestamp,
                  block.record_count,
@@ -938,10 +963,15 @@ int validate_chain(const Library *lib) {
                  block.merkle_root,
                  block.sealed_by,
                  block.token_reward,
-                 block.transaction_id);
+                 block.transaction_id,
+                 block.proof_nonce,
+                 block.difficulty);
         sha256_hash_bytes((const uint8_t *)header, strlen(header), digest);
         bytes_to_hex(digest, 32, recomputed, HASH_LEN);
         if (strcmp(block.hash, recomputed) != 0) {
+            return 0;
+        }
+        if (!has_proof_of_work(block.hash, block.difficulty)) {
             return 0;
         }
     }
