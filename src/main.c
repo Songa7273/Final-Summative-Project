@@ -48,6 +48,9 @@ static void print_usage(const char *program_name) {
     printf("  %s mine_solo <miner_id>\n", program_name);
     printf("  %s mine_pool <miner_id>\n", program_name);
     printf("  %s mine_cloud <miner_id> <rounds>\n", program_name);
+    printf("  %s settle-fine <member_id> <amount>\n", program_name);
+    printf("  %s flag-fraud <request_id>\n", program_name);
+    printf("  %s review-fraud <request_id> <approve|reject>\n", program_name);
     printf("  %s verify\n", program_name);
     printf("  %s validate_chain\n", program_name);
     printf("  %s list\n", program_name);
@@ -195,28 +198,42 @@ int main(int argc, char **argv) {
         return 0;
     }
 
-    if ((strcmp(argv[1], "mine") == 0 || strcmp(argv[1], "mine_solo") == 0 || strcmp(argv[1], "mine_pool") == 0) && argc >= 3) {
+    if (strcmp(argv[1], "mine_solo") == 0 && argc >= 3) {
+        status = mine_pending_solo(lib, argv[2]);
+        if (status && !save_default_state(lib)) {
+            status = 0;
+        }
+        free(lib);
+        return status ? 0 : 1;
+    }
+
+    if (strcmp(argv[1], "mine_pool") == 0 && argc >= 3) {
+        status = mine_pending_pool(lib, argv[2], argc >= 4 ? atoi(argv[3]) : 1);
+        if (status && !save_default_state(lib)) {
+            status = 0;
+        }
+        free(lib);
+        return status ? 0 : 1;
+    }
+
+    if (strcmp(argv[1], "mine") == 0 && argc >= 3) {
         status = mine_pending(lib, argv[2]);
         if (status && !save_default_state(lib)) {
             free(lib);
             return 1;
         }
         free(lib);
-        return 0;
+        return status ? 0 : 1;
     }
 
     if (strcmp(argv[1], "mine_cloud") == 0 && argc >= 4) {
         int rounds = atoi(argv[3]);
-        int i;
-        for (i = 0; i < rounds; ++i) {
-            mine_pending(lib, argv[2]);
-        }
-        if (!save_default_state(lib)) {
-            free(lib);
-            return 1;
+        status = mine_pending_cloud(lib, argv[2], rounds);
+        if (status && !save_default_state(lib)) {
+            status = 0;
         }
         free(lib);
-        return 0;
+        return status ? 0 : 1;
     }
 
     if (strcmp(argv[1], "borrow") == 0 || strcmp(argv[1], "borrow_book") == 0) {
@@ -310,6 +327,33 @@ int main(int argc, char **argv) {
             return 1;
         }
         status = add_copy(lib, argv[2], argv[3]);
+        if (status && !save_default_state(lib)) {
+            status = 0;
+        }
+        free(lib);
+        return status ? 0 : 1;
+    }
+
+    if (strcmp(argv[1], "settle-fine") == 0 && argc >= 4) {
+        status = settle_fine(lib, argv[2], atof(argv[3]));
+        if (status && !save_default_state(lib)) {
+            status = 0;
+        }
+        free(lib);
+        return status ? 0 : 1;
+    }
+
+    if (strcmp(argv[1], "flag-fraud") == 0 && argc >= 3) {
+        status = flag_request_suspicious(lib, argv[2]);
+        if (status && !save_default_state(lib)) {
+            status = 0;
+        }
+        free(lib);
+        return status ? 0 : 1;
+    }
+
+    if (strcmp(argv[1], "review-fraud") == 0 && argc >= 4) {
+        status = review_request(lib, argv[2], argv[3]);
         if (status && !save_default_state(lib)) {
             status = 0;
         }

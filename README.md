@@ -33,8 +33,14 @@ Run the automated checks with:
 - `./library load`
 - `./library borrow B001 M001`
 - `./library mine miner1`
+- `./library mine_solo miner1`
+- `./library mine_pool miner1 3`
+- `./library mine_cloud miner1 3`
 - `./library verify`
 - `./library save state.txt`
+- `./library settle-fine M001 2.50`
+- `./library flag-fraud <request_id>`
+- `./library review-fraud <request_id> approve`
 
 Mutating commands automatically load and save `state.txt`, so separate commands
 share the same ledger. Run `seed` to recreate the sample registries and reset
@@ -53,5 +59,8 @@ manually.
 
 Mining performs proof-of-work at the configured `BLOCK_DIFFICULTY`, and
 `verify` checks the chain links, Merkle roots, block hashes, and proof-of-work.
+Solo, pool, and cloud commands print mining difficulty and reward summaries.
+Suspicious pending requests can be flagged and then approved or rejected through
+manual review. Outstanding overdue fines can be settled explicitly.
 
 The project is designed as a working prototype for the ALU blockchain summative assignment rather than a production-grade library system.

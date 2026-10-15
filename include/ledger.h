@@ -59,6 +59,8 @@ typedef struct {
     char private_key[ECDSA_PRIVATE_KEY_LEN];
     char public_key[ECDSA_PUBLIC_KEY_LEN];
     unsigned long nonce;
+    double outstanding_fine;
+    int token_balance;
 } Member;
 
 typedef struct {
@@ -146,6 +148,12 @@ int return_book(Library *lib, const char *copy_id, const char *member_id);
 int renew_book(Library *lib, const char *copy_id, const char *member_id);
 int scan_overdue(Library *lib);
 int mine_pending(Library *lib, const char *miner_id);
+int mine_pending_solo(Library *lib, const char *miner_id);
+int mine_pending_pool(Library *lib, const char *miner_id, int workers);
+int mine_pending_cloud(Library *lib, const char *miner_id, int rounds);
+int settle_fine(Library *lib, const char *member_id, double amount);
+int flag_request_suspicious(Library *lib, const char *request_id);
+int review_request(Library *lib, const char *request_id, const char *decision);
 int validate_chain(const Library *lib);
 void print_library_summary(const Library *lib);
 void print_pending_requests(const Library *lib);

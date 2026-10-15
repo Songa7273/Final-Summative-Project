@@ -512,6 +512,7 @@ static void add_pending_request(Library *lib, const char *book_id, const char *c
     if (lib->pending_count >= MAX_PENDING) {
         return;
     }
+
     request = &lib->pending[lib->pending_count++];
     generate_request_id(book_id, copy_id, member_id, action, request_id);
     snprintf(request->request_id, sizeof(request->request_id), "%s", request_id);
@@ -521,6 +522,19 @@ static void add_pending_request(Library *lib, const char *book_id, const char *c
     snprintf(request->action_requested, sizeof(request->action_requested), "%s", action);
     request->priority = priority;
     snprintf(request->status, sizeof(request->status), "%s", "PENDING");
+}
+
+static PendingRequest *find_pending_request(Library *lib, const char *request_id) {
+    int i;
+    if (lib == NULL || request_id == NULL) {
+        return NULL;
+    }
+    for (i = 0; i < lib->pending_count; ++i) {
+        if (strcmp(lib->pending[i].request_id, request_id) == 0) {
+            return &lib->pending[i];
+        }
+    }
+    return NULL;
 }
 
 static void assign_next_reservation(Copy *copy) {
@@ -678,6 +692,7 @@ int return_book(Library *lib, const char *copy_id, const char *member_id) {
 
     overdue_days = compute_late_days(copy->due_date);
     fine_amount = overdue_days > 0 ? overdue_days * 2.5 : 0.0;
+    member->outstanding_fine += fine_amount;
     snprintf(due_date, sizeof(due_date), "%s", copy->due_date);
 
     memset(&record, 0, sizeof(record));
@@ -800,6 +815,7 @@ int scan_overdue(Library *lib) {
                     snprintf(record.action, sizeof(record.action), "%s", "OVERDUE");
                     snprintf(record.due_date, sizeof(record.due_date), "%s", copy->due_date);
                     record.fine_amount = fine;
+                    member->outstanding_fine += fine;
                     record.nonce = member->nonce++;
                     generate_record_id(copy->book_id, copy->copy_id, copy->borrower_id, "OVERDUE", copy->due_date, record.nonce, record.record_id);
                     build_record_signature(&record, member);
@@ -825,6 +841,7 @@ int mine_pending(Library *lib, const char *miner_id) {
     char rewards[512] = {0};
     char block_header[2048];
     uint8_t digest[32];
+    unsigned long attempts = 0;
     if (lib == NULL || miner_id == NULL) {
         return 0;
     }
@@ -893,6 +910,7 @@ int mine_pending(Library *lib, const char *miner_id) {
     snprintf(block.transaction_id, sizeof(block.transaction_id), "%s", "reward");
     hash_string(rewards, block.transaction_id);
     for (block.proof_nonce = 0u;; ++block.proof_nonce) {
+        attempts++;
         snprintf(block_header, sizeof(block_header), "%d|%lld|%d|%s|%s|%s|%d|%s|%lu|%d",
                  block.index,
                  (long long)block.timestamp,
@@ -913,7 +931,100 @@ int mine_pending(Library *lib, const char *miner_id) {
 
     lib->chain.blocks[lib->chain.block_count++] = block;
     lib->pending_count = 0;
-    printf("Block #%d mined by %s with %d record(s).\n", block.index, miner_id, count);
+    printf("Block #%d mined by %s with %d record(s), reward=%d tokens, attempts=%lu.\n",
+           block.index, miner_id, count, block.token_reward, attempts);
+    return 1;
+}
+
+int mine_pending_solo(Library *lib, const char *miner_id) {
+    printf("Solo mining started: difficulty=%d\n", BLOCK_DIFFICULTY);
+    return mine_pending(lib, miner_id);
+}
+
+int mine_pending_pool(Library *lib, const char *miner_id, int workers) {
+    int result;
+    if (workers < 1) {
+        fprintf(stderr, "Error: pool worker count must be positive.\n");
+        return 0;
+    }
+    printf("Pool mining started: workers=%d, difficulty=%d\n", workers, BLOCK_DIFFICULTY);
+    result = mine_pending(lib, miner_id);
+    if (result && lib->chain.block_count > 0) {
+        Block *block = &lib->chain.blocks[lib->chain.block_count - 1];
+        printf("Reward-sharing table\n");
+        printf("Worker\tShare\n%s\t%d\n", miner_id, block->token_reward);
+        if (workers > 1) {
+            printf("Each of %d registered workers receives an equal conceptual share of %.2f tokens.\n",
+                   workers, (double)block->token_reward / workers);
+        }
+    }
+    return result;
+}
+
+int mine_pending_cloud(Library *lib, const char *miner_id, int rounds) {
+    int round;
+    int completed = 0;
+    int earnings = 0;
+    if (rounds < 1) {
+        fprintf(stderr, "Error: cloud mining rounds must be positive.\n");
+        return 0;
+    }
+    printf("Cloud mining started: rounds=%d, difficulty=%d\n", rounds, BLOCK_DIFFICULTY);
+    for (round = 1; round <= rounds; ++round) {
+        int before = lib->chain.block_count;
+        if (mine_pending(lib, miner_id)) {
+            completed++;
+            earnings += lib->chain.blocks[before].token_reward;
+        } else {
+            printf("Cloud round %d: no pending transactions.\n", round);
+        }
+    }
+    printf("Cloud earnings summary: completed_rounds=%d total_tokens=%d\n", completed, earnings);
+    return 1;
+}
+
+int settle_fine(Library *lib, const char *member_id, double amount) {
+    Member *member;
+    if (lib == NULL || member_id == NULL || amount <= 0.0) {
+        return 0;
+    }
+    member = find_member(lib, member_id);
+    if (member == NULL || member->outstanding_fine <= 0.0 || amount > member->outstanding_fine) {
+        fprintf(stderr, "Error: invalid member or settlement amount.\n");
+        return 0;
+    }
+    member->outstanding_fine -= amount;
+    printf("Fine settled for %s: %.2f paid, %.2f remaining.\n",
+           member_id, amount, member->outstanding_fine);
+    return 1;
+}
+
+int flag_request_suspicious(Library *lib, const char *request_id) {
+    PendingRequest *request = find_pending_request(lib, request_id);
+    if (request == NULL || strcmp(request->status, "PENDING") != 0) {
+        fprintf(stderr, "Error: pending request not found.\n");
+        return 0;
+    }
+    snprintf(request->status, sizeof(request->status), "%s", "SUSPICIOUS");
+    request->priority = 99;
+    printf("Fraud flag raised for request %s; manual review required.\n", request_id);
+    return 1;
+}
+
+int review_request(Library *lib, const char *request_id, const char *decision) {
+    PendingRequest *request = find_pending_request(lib, request_id);
+    if (request == NULL || strcmp(request->status, "SUSPICIOUS") != 0 ||
+        (strcmp(decision, "approve") != 0 && strcmp(decision, "reject") != 0)) {
+        fprintf(stderr, "Error: suspicious request or review decision is invalid.\n");
+        return 0;
+    }
+    if (strcmp(decision, "approve") == 0) {
+        snprintf(request->status, sizeof(request->status), "%s", "PENDING");
+        request->priority = 0;
+    } else {
+        snprintf(request->status, sizeof(request->status), "%s", "REJECTED");
+    }
+    printf("Manual review: request %s -> %s.\n", request_id, decision);
     return 1;
 }
 
@@ -982,6 +1093,7 @@ void print_pending_requests(const Library *lib) {
     }
     for (i = 0; i < lib->pending_count; ++i) {
         const PendingRequest *request = &lib->pending[i];
-        printf("%s | %s | %s | %s | %s\n", request->request_id, request->book_id, request->copy_id, request->member_id, request->status);
+        printf("%s | priority=%d | %s | %s | %s | %s\n", request->request_id, request->priority,
+               request->book_id, request->copy_id, request->member_id, request->status);
     }
 }
