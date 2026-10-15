@@ -5,6 +5,30 @@
 #include <string.h>
 #include <time.h>
 
+#define DEFAULT_STATE_PATH "state.txt"
+
+static int load_default_state(Library *lib) {
+    FILE *state = fopen(DEFAULT_STATE_PATH, "rb");
+    int loaded;
+    if (state != NULL) {
+        fclose(state);
+        loaded = load_state(lib, DEFAULT_STATE_PATH);
+        if (!loaded) {
+            fprintf(stderr, "Error: default state is corrupt or incompatible.\n");
+        }
+        return loaded;
+    }
+    return load_registries(lib, "books.txt", "members.txt", "copies.txt");
+}
+
+static int save_default_state(const Library *lib) {
+    if (!save_state(lib, DEFAULT_STATE_PATH)) {
+        fprintf(stderr, "Error: unable to persist default state.\n");
+        return 0;
+    }
+    return 1;
+}
+
 static void print_usage(const char *program_name) {
     printf("Usage:\n");
     printf("  %s seed\n", program_name);
@@ -89,6 +113,7 @@ int main(int argc, char **argv) {
     }
 
     if (strcmp(argv[1], "seed") == 0) {
+        remove(DEFAULT_STATE_PATH);
         if (create_sample_files()) {
             printf("Sample registries created.\n");
         } else {
@@ -119,7 +144,7 @@ int main(int argc, char **argv) {
     }
 
     if (strcmp(argv[1], "load") == 0) {
-        if (!load_registries(lib, "books.txt", "members.txt", "copies.txt")) {
+        if (!load_default_state(lib)) {
             fprintf(stderr, "Error: required registry files are missing or invalid.\n");
             free(lib);
             return 1;
@@ -129,7 +154,7 @@ int main(int argc, char **argv) {
         return 0;
     }
 
-    if (!load_registries(lib, "books.txt", "members.txt", "copies.txt")) {
+    if (!load_default_state(lib)) {
         fprintf(stderr, "Error: registries not loaded. Run '%s seed' first.\n", argv[0]);
         free(lib);
         return 1;
@@ -146,13 +171,20 @@ int main(int argc, char **argv) {
             printf("Blockchain validation passed.\n");
         } else {
             printf("Blockchain validation failed.\n");
+            free(lib);
+            return 1;
         }
         free(lib);
         return 0;
     }
 
     if (strcmp(argv[1], "overdue") == 0 || strcmp(argv[1], "check_overdue") == 0) {
-        printf("Overdue scan result: %d flagged.\n", scan_overdue(lib));
+        status = scan_overdue(lib);
+        printf("Overdue scan result: %d flagged.\n", status);
+        if (!save_default_state(lib)) {
+            free(lib);
+            return 1;
+        }
         free(lib);
         return 0;
     }
@@ -164,7 +196,11 @@ int main(int argc, char **argv) {
     }
 
     if ((strcmp(argv[1], "mine") == 0 || strcmp(argv[1], "mine_solo") == 0 || strcmp(argv[1], "mine_pool") == 0) && argc >= 3) {
-        mine_pending(lib, argv[2]);
+        status = mine_pending(lib, argv[2]);
+        if (status && !save_default_state(lib)) {
+            free(lib);
+            return 1;
+        }
         free(lib);
         return 0;
     }
@@ -174,6 +210,10 @@ int main(int argc, char **argv) {
         int i;
         for (i = 0; i < rounds; ++i) {
             mine_pending(lib, argv[2]);
+        }
+        if (!save_default_state(lib)) {
+            free(lib);
+            return 1;
         }
         free(lib);
         return 0;
@@ -186,6 +226,9 @@ int main(int argc, char **argv) {
             return 1;
         }
         status = borrow_book(lib, argv[2], argv[3]);
+        if (status && !save_default_state(lib)) {
+            status = 0;
+        }
         free(lib);
         return status ? 0 : 1;
     }
@@ -197,6 +240,9 @@ int main(int argc, char **argv) {
             return 1;
         }
         status = return_book(lib, argv[2], argv[3]);
+        if (status && !save_default_state(lib)) {
+            status = 0;
+        }
         free(lib);
         return status ? 0 : 1;
     }
@@ -208,6 +254,9 @@ int main(int argc, char **argv) {
             return 1;
         }
         status = reserve_book(lib, argv[2], argv[3]);
+        if (status && !save_default_state(lib)) {
+            status = 0;
+        }
         free(lib);
         return status ? 0 : 1;
     }
@@ -219,6 +268,9 @@ int main(int argc, char **argv) {
             return 1;
         }
         status = renew_book(lib, argv[2], argv[3]);
+        if (status && !save_default_state(lib)) {
+            status = 0;
+        }
         free(lib);
         return status ? 0 : 1;
     }
@@ -230,6 +282,9 @@ int main(int argc, char **argv) {
             return 1;
         }
         status = add_book(lib, argv[2], argv[3], argv[4]);
+        if (status && !save_default_state(lib)) {
+            status = 0;
+        }
         free(lib);
         return status ? 0 : 1;
     }
@@ -241,6 +296,9 @@ int main(int argc, char **argv) {
             return 1;
         }
         status = add_member(lib, argv[2], argv[3], argv[4]);
+        if (status && !save_default_state(lib)) {
+            status = 0;
+        }
         free(lib);
         return status ? 0 : 1;
     }
@@ -252,6 +310,9 @@ int main(int argc, char **argv) {
             return 1;
         }
         status = add_copy(lib, argv[2], argv[3]);
+        if (status && !save_default_state(lib)) {
+            status = 0;
+        }
         free(lib);
         return status ? 0 : 1;
     }

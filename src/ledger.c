@@ -6,6 +6,16 @@
 #include <string.h>
 #include <time.h>
 
+#define STATE_MAGIC "LIBLEDG1"
+#define STATE_VERSION 1u
+
+typedef struct {
+    char magic[8];
+    uint32_t version;
+    uint32_t payload_size;
+    unsigned char checksum[SHA256_DIGEST_LEN];
+} StateHeader;
+
 static void trim_in_place(char *str) {
     char *start = str;
     char *end;
@@ -418,35 +428,28 @@ int load_registries(Library *lib, const char *books_path, const char *members_pa
 
 int save_state(const Library *lib, const char *path) {
     FILE *fp;
-    int i;
+    StateHeader header;
+    unsigned char checksum[SHA256_DIGEST_LEN];
 
     if (lib == NULL || path == NULL) {
         return 0;
     }
 
-    fp = fopen(path, "w");
+    memset(&header, 0, sizeof(header));
+    memcpy(header.magic, STATE_MAGIC, sizeof(header.magic));
+    header.version = STATE_VERSION;
+    header.payload_size = (uint32_t)sizeof(*lib);
+    sha256_hash_bytes((const uint8_t *)lib, sizeof(*lib), checksum);
+    memcpy(header.checksum, checksum, sizeof(header.checksum));
+
+    fp = fopen(path, "wb");
     if (fp == NULL) {
         return 0;
     }
-
-    fprintf(fp, "# books\n");
-    for (i = 0; i < lib->book_count; ++i) {
-        fprintf(fp, "%s,%s,%s\n", lib->books[i].id, lib->books[i].title, lib->books[i].author);
-    }
-    fprintf(fp, "# members\n");
-    for (i = 0; i < lib->member_count; ++i) {
-        fprintf(fp, "%s,%s,%s\n", lib->members[i].id, lib->members[i].name, lib->members[i].course);
-    }
-    fprintf(fp, "# copies\n");
-    for (i = 0; i < lib->copy_count; ++i) {
-        fprintf(fp, "%s,%s,%d,%s,%s,%d,%d\n",
-                lib->copies[i].copy_id,
-                lib->copies[i].book_id,
-                lib->copies[i].status,
-                lib->copies[i].borrower_id,
-                lib->copies[i].due_date,
-                lib->copies[i].renewal_count,
-                lib->copies[i].reserved_count);
+    if (fwrite(&header, sizeof(header), 1, fp) != 1 ||
+        fwrite(lib, sizeof(*lib), 1, fp) != 1) {
+        fclose(fp);
+        return 0;
     }
     fclose(fp);
     return 1;
@@ -454,70 +457,50 @@ int save_state(const Library *lib, const char *path) {
 
 int load_state(Library *lib, const char *path) {
     FILE *fp;
-    char line[512];
-    int in_books = 0;
-    int in_members = 0;
-    int in_copies = 0;
+    StateHeader header;
+    Library *candidate;
+    unsigned char checksum[SHA256_DIGEST_LEN];
 
     if (lib == NULL || path == NULL) {
         return 0;
     }
 
-    library_init(lib);
-    fp = fopen(path, "r");
+    fp = fopen(path, "rb");
     if (fp == NULL) {
         return 0;
     }
-
-    while (fgets(line, sizeof(line), fp) != NULL) {
-        char *parts[8] = {0};
-        char *token;
-        int idx = 0;
-        trim_in_place(line);
-        if (line[0] == '\0' || line[0] == '#') {
-            if (strstr(line, "books") != NULL) {
-                in_books = 1; in_members = 0; in_copies = 0;
-            } else if (strstr(line, "members") != NULL) {
-                in_books = 0; in_members = 1; in_copies = 0;
-            } else if (strstr(line, "copies") != NULL) {
-                in_books = 0; in_members = 0; in_copies = 1;
-            }
-            continue;
-        }
-        token = strtok(line, ",");
-        while (token != NULL && idx < 8) {
-            trim_in_place(token);
-            parts[idx++] = token;
-            token = strtok(NULL, ",");
-        }
-        if (in_books && idx >= 3) {
-            add_book(lib, parts[0], parts[1], parts[2]);
-        } else if (in_members && idx >= 3) {
-            add_member(lib, parts[0], parts[1], parts[2]);
-        } else if (in_copies && idx >= 2) {
-            Copy *copy;
-            add_copy(lib, parts[0], parts[1]);
-            copy = find_copy(lib, parts[0]);
-            if (copy != NULL) {
-                if (idx >= 3) {
-                    copy->status = strcmp(parts[2], "BORROWED") == 0 ? COPY_BORROWED : (strcmp(parts[2], "RESERVED") == 0 ? COPY_RESERVED : COPY_AVAILABLE);
-                }
-                if (idx >= 4) {
-                    snprintf(copy->borrower_id, sizeof(copy->borrower_id), "%s", parts[3]);
-                }
-                if (idx >= 5) {
-                    snprintf(copy->due_date, sizeof(copy->due_date), "%s", parts[4]);
-                }
-                if (idx >= 6) {
-                    copy->renewal_count = atoi(parts[5]);
-                }
-                if (idx >= 7) {
-                    copy->reserved_count = atoi(parts[6]);
-                }
-            }
-        }
+    candidate = malloc(sizeof(*candidate));
+    if (candidate == NULL) {
+        fclose(fp);
+        return 0;
+    }
+    if (fread(&header, sizeof(header), 1, fp) != 1 ||
+        memcmp(header.magic, STATE_MAGIC, sizeof(header.magic)) != 0 ||
+        header.version != STATE_VERSION ||
+        header.payload_size != sizeof(*candidate) ||
+        fread(candidate, sizeof(*candidate), 1, fp) != 1) {
+        fclose(fp);
+        free(candidate);
+        return 0;
     }
     fclose(fp);
+
+    if (candidate->book_count < 0 || candidate->book_count > MAX_BOOKS ||
+        candidate->member_count < 0 || candidate->member_count > MAX_MEMBERS ||
+        candidate->copy_count < 0 || candidate->copy_count > MAX_COPIES ||
+        candidate->pending_count < 0 || candidate->pending_count > MAX_PENDING ||
+        candidate->chain.block_count < 0 || candidate->chain.block_count > MAX_BLOCKS ||
+        candidate->chain.next_index < 0) {
+        free(candidate);
+        return 0;
+    }
+    sha256_hash_bytes((const uint8_t *)candidate, sizeof(*candidate), checksum);
+    if (memcmp(header.checksum, checksum, sizeof(checksum)) != 0) {
+        free(candidate);
+        return 0;
+    }
+    *lib = *candidate;
+    free(candidate);
     return 1;
 }
 

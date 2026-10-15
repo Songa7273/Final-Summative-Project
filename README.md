@@ -10,6 +10,8 @@ This project implements a compact C-based blockchain library lending simulator. 
 - proof-of-work mining with nonce and difficulty validation
 - overdue detection, renewals, and reservation queues
 - simple state persistence via `save` and `load` style files
+- complete binary state snapshots with integrity checks for keys, pending actions,
+  blockchain history, and proof-of-work metadata
 
 ## Build
 
@@ -33,6 +35,11 @@ Run the automated checks with:
 - `./library mine miner1`
 - `./library verify`
 - `./library save state.txt`
+
+Mutating commands automatically load and save `state.txt`, so separate commands
+share the same ledger. Run `seed` to recreate the sample registries and reset
+the default state. State files are integrity-checked and should not be edited
+manually.
 
 ## Demo flow
 

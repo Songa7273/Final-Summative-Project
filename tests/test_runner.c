@@ -47,11 +47,39 @@ static int test_ledger(void) {
     return passed;
 }
 
+static int test_persistence(void) {
+    Library *original = malloc(sizeof(*original));
+    Library *restored = malloc(sizeof(*restored));
+    int passed = 0;
+    if (original == NULL || restored == NULL) {
+        free(original);
+        free(restored);
+        return 0;
+    }
+    library_init(original);
+    if (load_registries(original, "books.txt", "members.txt", "copies.txt") &&
+        borrow_book(original, "B001", "M001") &&
+        mine_pending(original, "persistence-miner") &&
+        save_state(original, "test-state.bin") &&
+        load_state(restored, "test-state.bin") &&
+        restored->chain.block_count == 1 &&
+        restored->chain.blocks[0].proof_nonce == original->chain.blocks[0].proof_nonce &&
+        strcmp(restored->members[0].private_key, original->members[0].private_key) == 0 &&
+        validate_chain(restored)) {
+        passed = 1;
+    }
+    remove("test-state.bin");
+    free(original);
+    free(restored);
+    return passed;
+}
+
 int main(void) {
     int sha_ok = test_sha256();
     int signature_ok = test_signatures();
     int ledger_ok = test_ledger();
-    if (!sha_ok || !signature_ok || !ledger_ok) {
+    int persistence_ok = test_persistence();
+    if (!sha_ok || !signature_ok || !ledger_ok || !persistence_ok) {
         fprintf(stderr, "Tests failed.\n");
         return 1;
     }
