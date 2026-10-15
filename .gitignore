@@ -1,0 +1,6 @@
+library
+*.o
+*.obj
+*.exe
+*.out
+state.txt
